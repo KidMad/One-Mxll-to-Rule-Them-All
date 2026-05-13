@@ -1,0 +1,8 @@
+{
+  "fortran.linter.includePaths": [
+    "${workspaceFolder}",
+    "/home/grecofra/Desktop/dftbplus/_build/src/dftbp/include"
+  ],
+  "workbench.settings.openDefaultKeybindings": false,
+  "makefile.configureOnOpen": false
+}
