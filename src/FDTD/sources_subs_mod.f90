@@ -10,10 +10,12 @@ module sources_subs_mod
 
         integer :: n_p_src
         integer :: n_pw_src
+        integer :: n_gb_src
         integer :: n_srcs
 
         type(TPointSrc)    , allocatable :: points(:)
         type(TPlaneWaveSrc), allocatable :: plane_waves(:)
+        type(TGaussbeamSrc), allocatable :: gauss_beams(:)
 
     contains
         procedure :: read_init_sources
@@ -70,10 +72,9 @@ module sources_subs_mod
         real(dp)            :: phi
         real(dp)            :: theta
         real(dp)            :: psi
-    
         real(dp)            :: v_vec(3)
         real(dp)            :: A_vec(3)
-        real(dp)            :: w0
+        real(dp)            :: w0              
         real(dp)            :: t0
         real(dp)            :: tau
         real(dp)            :: t_init
@@ -97,6 +98,49 @@ module sources_subs_mod
 
     end type TPlaneWaveSrc
 
+    type :: TGaussbeamSrc
+
+        complex(dp)         :: E_rzt
+        real(dp)            :: E_amp
+        integer             :: dim
+        !Assuming the k vector is initially parallel to z, the E field to x and the H field to y,
+        !phi is the angle respect to x, theta is the angle respect to z and psi is the angle
+        !of rotation of the E field respect to the plane defined by k and z.  
+        real(dp)            :: phi
+        real(dp)            :: theta
+        real(dp)            :: psi
+    
+        real(dp)            :: v_vec(3)
+        real(dp)            :: freq
+        real(dp)            :: t0
+        real(dp)            :: dz_ramp
+        real(dp)            :: z0_ramp
+        real(dp)            :: phase
+        real(dp)            :: w0
+        real(dp)            :: w
+        real(dp)            :: z_R
+        real(dp)            :: r0(3) !focus position
+        real(dp)            :: lambda
+        real(dp)            :: k
+        real(dp)            :: r_min, r_max
+        integer             :: i_min, i_max
+        integer             :: j_min, j_max
+        integer             :: k_min, k_max
+        integer             :: i_min_loc, i_max_loc
+        integer             :: j_min_loc, j_max_loc
+        integer             :: k_min_loc, k_max_loc
+        logical             :: i_min_in_this_rank, i_max_in_this_rank
+        logical             :: j_min_in_this_rank, j_max_in_this_rank
+        logical             :: k_min_in_this_rank, k_max_in_this_rank
+
+    contains
+
+        procedure :: init_gaussbeam_src
+        procedure :: kill_gaussbeam_src
+        procedure :: compute_time_space_profile
+
+    end type TGaussbeamSrc
+
 contains
 
 !###################################################################################################
@@ -116,10 +160,11 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
 
     character(len=20) :: src_file = "sources.in"
     logical           :: pw_source
-    logical           :: p_source 
+    logical           :: p_source
+    logical           :: gb_source
     integer           :: ierr, funit
     integer           :: i
-    integer           :: n_p_src, n_pw_src
+    integer           :: n_p_src, n_pw_src, n_gb_src
 
     ! Check whether file exists.
     inquire (file=src_file, iostat=ierr)
@@ -137,11 +182,13 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
 
     n_p_src = 0
     n_pw_src = 0
+    n_gb_src = 0
 
     do
 
         pw_source = .false.
         p_source  = .false.
+        gb_source = .false.
 
         read (unit=funit, fmt=*, iostat=ierr) src_type_ch
 
@@ -150,11 +197,14 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
         p_source  = (trim(src_type_ch) == "point")
         pw_source = any(trim(src_type_ch) == [character(len=15) :: "plane_wave", &
                     "plane_wave_kx", "plane_wave_ky", "plane_wave_kz"])
+        gb_source = (trim(src_type_ch) == "gaussbeam")
 
         if (p_source) then
             n_p_src = n_p_src + 1
         else if (pw_source) then
             n_pw_src = n_pw_src + 1
+        else if (gb_source) then
+            n_gb_src = n_gb_src + 1
         else
             write (*, '("Error: unknown source type ", A)') trim(src_type_ch)
             error stop
@@ -166,6 +216,7 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
 
     this%n_p_src = n_p_src
     this%n_pw_src = n_pw_src
+    this%n_gb_src = n_gb_src
 
     if (n_p_src > 0) then
         if (.not. allocated(this%points)) allocate(this%points(this%n_p_src))
@@ -176,13 +227,20 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
             allocate(this%plane_waves(this%n_pw_src))
     end if
 
-    n_p_src = 1
+    if (n_gb_src > 0) then
+        if (.not. allocated(this%gauss_beams)) &
+            allocate(this%gauss_beams(this%n_gb_src))
+    end if
+
+    n_p_src  = 1
     n_pw_src = 1
+    n_gb_src = 1
 
     do
 
         p_source  = .false.
         pw_source = .false.
+        gb_source = .false.
 
         read (unit=funit, fmt='(A)', iostat=ierr) input_ch
 
@@ -193,6 +251,7 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
         p_source  = (trim(src_type_ch) == "point")
         pw_source = any(trim(src_type_ch) == [character(len=15) :: "plane_wave", &
                     "plane_wave_kx", "plane_wave_ky", "plane_wave_kz"])
+        gb_source = (trim(src_type_ch) == "gaussbeam")
 
         if (p_source) then
             call this%points(n_p_src)%init_point_src(input_ch, dimensions, dt, dr, &
@@ -202,6 +261,10 @@ subroutine read_init_sources(this, dimensions, dt, dr, grid_Ndims, mpi_coords, m
             call this%plane_waves(n_pw_src)%init_plane_wave_src(input_ch, dimensions, &
                                                         dt , dr, grid_Ndims, mpi_coords, mpi_dims)
             n_pw_src = n_pw_src + 1
+        else if (gb_source) then
+            call this%gauss_beams(n_gb_src)%init_gaussbeam_src(input_ch, dimensions, dt, dr, &
+                                                        grid_Ndims, mpi_coords, mpi_dims)
+            n_gb_src = n_gb_src + 1
         else
             write (*, '("Error: unknown source type ", A)') trim(src_type_ch)
             error stop
@@ -226,6 +289,10 @@ subroutine kill_sources(this)
 
     do i = 1, this%n_pw_src
         call this%plane_waves(i)%kill_plane_wave_src()
+    end do
+
+    do i = 1, this%n_gb_src
+        call this%gauss_beams(i)%kill_gaussbeam_src()
     end do
 
 end subroutine kill_sources
@@ -286,7 +353,7 @@ subroutine init_point_src(this, input_ch, dim, dt, dr, grid_Ndims, mpi_coords, m
         real(dp)           :: r0(3)
         real(dp)           :: radius
         
-        integer :: n_ker
+        integer :: n_ker, i, j
 
         read(input_ch, *) type_src_ch, polarization, j_amp, freq, t0, tau, &
                           r0(1), r0(2), r0(3), radius, t_init, t_final, phase
@@ -333,6 +400,14 @@ subroutine init_point_src(this, input_ch, dim, dt, dr, grid_Ndims, mpi_coords, m
 
         this%in_this_rank=.true.
         call determine_indx_and_ranks(this, dr, grid_Ndims, mpi_coords, mpi_dims)
+
+        ! do j = -n_ker, n_ker
+        ! do i = -n_ker, n_ker
+        !     write(*,*) i, j, this%J_mat(i,j,1), this%in_this_rank(i,j,1)
+        ! end do
+        ! end do
+
+        ! stop
 
 end subroutine init_point_src
 
@@ -432,24 +507,24 @@ subroutine init_plane_wave_src(this, input_ch, dim, dt, dr, grid_Ndims, mpi_coor
         theta                = 0.0d0
     end select
 
-    this%dim          = dim
-    this%E_amp        = E_amp
+    this%dim   = dim
+    this%E_amp = E_amp
 
-    this%phi = phi/180.0d0*pi0
-    this%theta        = theta/180.0d0*pi0
-    this%psi          = psi/180.0d0*pi0
+    this%phi    = phi/180.0d0*pi0
+    this%theta  = theta/180.0d0*pi0
+    this%psi    = psi/180.0d0*pi0
 
-    if (this%phi < 0.0d0)   this%phi = this%phi + 2*pi0
+    if (this%phi < 0.0d0)   this%phi   = this%phi + 2*pi0
     if (this%theta < 0.0d0) this%theta = this%theta + 2*pi0
-    if (this%psi < 0.0d0)   this%psi = this%psi + 2*pi0
+    if (this%psi < 0.0d0)   this%psi   = this%psi + 2*pi0
 
     
-    this%w0           = freq * ev_to_au
-    this%t0           = t0   * fs_to_au
-    this%tau          = tau  * fs_to_au
-    this%t_init       = t_init  * fs_to_au
-    this%t_final      = t_final * fs_to_au
-    this%phase        = phase
+    this%w0      = freq * ev_to_au
+    this%t0      = t0   * fs_to_au
+    this%tau     = tau  * fs_to_au
+    this%t_init  = t_init  * fs_to_au
+    this%t_final = t_final * fs_to_au
+    this%phase   = phase
 
     x_min  = x_min * nm_to_au
     x_max  = x_max * nm_to_au
@@ -585,20 +660,20 @@ subroutine init_plane_wave_src(this, input_ch, dim, dt, dr, grid_Ndims, mpi_coor
         this%v_vec =  (/DCOS(this%phi), DSIN(this%phi), 0.0d0/)
         this%A_vec = 0.0d0 
 
-        if (this%phi >= 0.0d0 .and. this%phi <= pi0/2.0d0) then
+        if (phi >= 0.0_dp .and. phi <= 90.0_dp) then
             this%A_vec(1) = (i_min - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
             this%A_vec(2) = (j_min - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
-        else if (this%phi > pi0/2.0d0 .and. this%phi <= pi0) then
-            this%A_vec(1) = (i_min - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
-            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
-        else if (this%phi > pi0 .and. this%phi <= 3.0d0*pi0/2.0d0) then
-            this%A_vec(1) = (i_max - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
-            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
-        else if (this%phi > 3.0d0*pi0/2.0d0 .and. this%phi <= 2.0d0*pi0) then
+        else if (phi > 90.0_dp .and. phi <= 180.0_dp) then
             this%A_vec(1) = (i_max - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
             this%A_vec(2) = (j_min - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
+        else if (phi > 180.0_dp .and. phi <= 270.0_dp) then
+            this%A_vec(1) = (i_max - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
+            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
+        else if (phi > 270.0_dp .and. phi <= 360.0_dp) then
+            this%A_vec(1) = (i_min - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
+            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
         end if
-
+        
     case (3)
         dr_1D = dr * SQRT( DCOS(this%theta)**4 + &
                            DSIN(this%theta)**4 * (DCOS(this%phi)**4 + DSIN(this%phi)**4) )
@@ -609,23 +684,23 @@ subroutine init_plane_wave_src(this, input_ch, dim, dt, dr, grid_Ndims, mpi_coor
 
         this%A_vec = 0.0d0
 
-        if (this%phi >= 0.0d0 .and. this%phi <= pi0/2.0d0) then
+        if (phi >= 0.0_dp .and. phi <= 90.0_dp) then
             this%A_vec(1) = (i_min - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
             this%A_vec(2) = (j_min - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
-        else if (this%phi > pi0/2.0d0 .and. this%phi <= pi0) then
-            this%A_vec(1) = (i_min - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
-            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
-        else if (this%phi > pi0 .and. this%phi <= 3.0d0*pi0/2.0d0) then
-            this%A_vec(1) = (i_max - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
-            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
-        else if (this%phi > 3.0d0*pi0/2.0d0 .and. this%phi <= 2.0d0*pi0) then
+        else if (phi > 90.0_dp .and. phi <= 180.0_dp) then
             this%A_vec(1) = (i_max - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
             this%A_vec(2) = (j_min - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
+        else if (phi > 180.0_dp .and. phi <= 270.0_dp) then
+            this%A_vec(1) = (i_max - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
+            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
+        else if (phi > 270.0_dp .and. phi <= 360.0_dp) then
+            this%A_vec(1) = (i_min - int(grid_Ndims(1)*mpi_dims(1)/2))*dr
+            this%A_vec(2) = (j_max - int(grid_Ndims(2)*mpi_dims(2)/2))*dr
         end if
 
-        if (this%theta >= 0.0d0 .and. this%theta <= pi0/2.0d0) then
+        if (theta >= 0.0_dp .and. theta <= 90.0_dp) then
             this%A_vec(3) = (k_min - int(grid_Ndims(3)*mpi_dims(3)/2))*dr
-        else if (this%theta > pi0/2.0d0 .and. this%theta <= pi0) then
+        else if (theta > 90.0_dp .and. theta <= 180.0_dp) then
             this%A_vec(3) = (k_max - int(grid_Ndims(3)*mpi_dims(3)/2))*dr
         end if
 
@@ -692,6 +767,250 @@ subroutine propagate_plane_wave_src(this, time)
     end if
 
 end subroutine propagate_plane_wave_src
+
+!###################################################################################################
+
+subroutine init_gaussbeam_src(this, input_ch, dim, dt, dr, grid_Ndims, mpi_coords, mpi_dims)
+
+    class(TGaussbeamSrc) ,intent(inout) :: this
+    character(len=1000)  ,intent(in)    :: input_ch
+    integer              ,intent(in)    :: grid_Ndims(3)
+    integer              ,intent(in)    :: mpi_coords(3)
+    integer              ,intent(in)    :: mpi_dims(3)
+    integer              ,intent(in)    :: dim
+    real(dp)             ,intent(in)    :: dr
+    real(dp)             ,intent(in)    :: dt
+
+    character(len=50)  :: type_src_ch
+    integer            :: i_min, i_max, j_min, j_max, k_min, k_max
+    integer            :: rank_x, rank_y, rank_z
+
+    real(dp)           :: E_amp
+    integer            :: aux_grid_Ndim(3)
+    integer            :: aux_vec_mpi_coords(3)
+    integer            :: aux_boundaries(3)
+    real(dp)           :: dr_1D
+    real(dp)           :: phi
+    real(dp)           :: theta
+    real(dp)           :: psi
+    real(dp)           :: freq
+    real(dp)           :: dz_ramp
+    real(dp)           :: z0_ramp
+    real(dp)           :: phase
+    real(dp)           :: r0(3)
+    real(dp)           :: w0
+    real(dp)           :: x_min, x_max
+    real(dp)           :: y_min, y_max
+    real(dp)           :: z_min, z_max
+
+    read(input_ch, *) type_src_ch, E_amp, phi, theta, psi, freq, &
+                      x_min, x_max, y_min, y_max, z_min, z_max, &
+                      phase, r0(1), r0(2), r0(3), w0, dz_ramp, z0_ramp
+
+    this%dim   = dim
+    this%E_amp = E_amp
+
+    this%phi    = phi/180.0d0*pi0
+    this%theta  = theta/180.0d0*pi0
+    this%psi    = psi/180.0d0*pi0
+
+    if (this%phi < 0.0d0)   this%phi   = this%phi + 2*pi0
+    if (this%theta < 0.0d0) this%theta = this%theta + 2*pi0
+    if (this%psi < 0.0d0)   this%psi   = this%psi + 2*pi0
+
+    
+    this%freq    = freq * ev_to_au
+    this%phase   = phase
+    this%r0      = r0 * nm_to_au
+    this%w0      = w0 * nm_to_au
+    this%lambda  = 2*pi0*c0/this%freq
+    this%k       = 2*pi0/this%lambda
+    this%z_R     = pi0*this%w0**2/this%lambda
+    this%dz_ramp = dz_ramp * nm_to_au
+    this%z0_ramp = z0_ramp * nm_to_au
+
+    x_min  = x_min * nm_to_au
+    x_max  = x_max * nm_to_au
+    y_min  = y_min * nm_to_au
+    y_max  = y_max * nm_to_au
+    z_min  = z_min * nm_to_au
+    z_max  = z_max * nm_to_au
+
+    if (x_min < (1-int(grid_Ndims(1)*mpi_dims(1)/2))*dr .or. x_max > (int(grid_Ndims(1)*mpi_dims(1)/2))*dr) then
+        write (*, '("Error: the gauss beam source extends beyond the simulation box in x direction &
+                & [", F10.4, ", ", F10.4, "].")') (1-int(grid_Ndims(1)*mpi_dims(1)/2))*dr/nm_to_au, &
+                                                  (int(grid_Ndims(1)*mpi_dims(1)/2))*dr/nm_to_au
+        error stop
+    end if
+
+    if (dim > 1) then
+
+        if (y_min < (1-int(grid_Ndims(2)*mpi_dims(2)/2))*dr .or. y_max > (int(grid_Ndims(2)*mpi_dims(2)/2))*dr) then
+            write (*, '("Error: the gauss beam source extends beyond the simulation box in y direction &
+                    & [", F10.4, ", ", F10.4, "].")') (1-int(grid_Ndims(2)*mpi_dims(2)/2))*dr/nm_to_au, &
+                                                    (int(grid_Ndims(2)*mpi_dims(2)/2))*dr/nm_to_au
+            error stop
+        end if
+
+    end if
+
+    if (dim == 3) then
+
+        if (z_min < (1-int(grid_Ndims(3)*mpi_dims(3)/2))*dr .or. z_max > (int(grid_Ndims(3)*mpi_dims(3)/2))*dr) then
+            write (*, '("Error: the gauss beam source extends beyond the simulation box in z direction &
+                    & [", F10.4, ", ", F10.4, "].")') (1-int(grid_Ndims(3)*mpi_dims(3)/2))*dr/nm_to_au, &
+                                                    (int(grid_Ndims(3)*mpi_dims(3)/2))*dr/nm_to_au
+            error stop
+        end if
+    end if
+
+    i_min  = FLOOR(x_min/dr) + int(grid_Ndims(1)*mpi_dims(1)/2)
+    i_max  = FLOOR(x_max/dr) + int(grid_Ndims(1)*mpi_dims(1)/2)
+    j_min  = FLOOR(y_min/dr) + int(grid_Ndims(2)*mpi_dims(2)/2)
+    j_max  = FLOOR(y_max/dr) + int(grid_Ndims(2)*mpi_dims(2)/2)
+    k_min  = FLOOR(z_min/dr) + int(grid_Ndims(3)*mpi_dims(3)/2)
+    k_max  = FLOOR(z_max/dr) + int(grid_Ndims(3)*mpi_dims(3)/2)
+    
+    this%i_min = i_min
+    this%i_max = i_max
+    this%j_min = j_min
+    this%j_max = j_max
+    this%k_min = k_min
+    this%k_max = k_max
+    
+    this%i_min_in_this_rank = .false.
+    this%i_max_in_this_rank = .false.
+    this%j_min_in_this_rank = .false.
+    this%j_max_in_this_rank = .false.
+    this%k_min_in_this_rank = .false.
+    this%k_max_in_this_rank = .false.
+    
+    rank_x = int((i_min-1)/grid_Ndims(1))
+
+    if (rank_x == mpi_coords(1)) then
+        this%i_min_in_this_rank = .true.
+        this%i_min_loc          = i_min - rank_x*grid_Ndims(1)
+    end if
+
+    rank_x = int((i_max-1)/grid_Ndims(1))
+
+    if (rank_x == mpi_coords(1)) then
+        this%i_max_in_this_rank = .true.
+        this%i_max_loc          = i_max - rank_x*grid_Ndims(1)
+    end if
+
+    if (this%dim > 1) then
+
+        rank_y = int((j_min-1)/grid_Ndims(2))
+
+        if (rank_y == mpi_coords(2)) then
+            this%j_min_in_this_rank = .true.
+            this%j_min_loc          = j_min - rank_y*grid_Ndims(2)
+        end if
+
+        rank_y = int((j_max-1)/grid_Ndims(2))
+
+        if (rank_y == mpi_coords(2)) then
+            this%j_max_in_this_rank = .true.
+            this%j_max_loc          = j_max - rank_y*grid_Ndims(2)
+        end if
+
+    end if
+
+    if (this%dim == 3) then
+
+        rank_z = int((k_min-1)/grid_Ndims(3))
+
+        if (rank_z == mpi_coords(3)) then
+            this%k_min_in_this_rank = .true.
+            this%k_min_loc          = k_min - rank_z*grid_Ndims(3)
+        end if
+
+        rank_z = int((k_max-1)/grid_Ndims(3))
+
+        if (rank_z == mpi_coords(3)) then
+            this%k_max_in_this_rank = .true.
+            this%k_max_loc          = k_max - rank_z*grid_Ndims(3)
+        end if
+
+    end if
+
+    !Approximation to the exact matched numerical dispersion method for plane waves
+    !to adjust the grid spacing of the auxiliary 1D grid.
+
+    select case (this%dim)
+    case (1)
+        dr_1D = dr
+    case (2)
+        this%theta = pi0/2.0d0 
+        this%v_vec =  (/DCOS(this%phi), DSIN(this%phi), 0.0d0/)
+
+    case (3)
+
+        this%v_vec =  (/DCOS(this%phi)*DSIN(this%theta), &
+                       DSIN(this%phi)*DSIN(this%theta), &
+                       DCOS(this%theta)/)
+
+    end select 
+
+end subroutine init_gaussbeam_src
+
+!###################################################################################################
+
+subroutine kill_gaussbeam_src(this)
+
+    class(TGaussbeamSrc), intent(inout) :: this
+
+    !Currently, there are no dynamic resources to free.
+
+end subroutine kill_gaussbeam_src
+!###################################################################################################
+
+subroutine compute_time_space_profile(this, r, z, time)
+
+    class(TGaussbeamSrc), intent(inout) :: this
+    real(dp)            , intent(in)    :: r
+    real(dp)            , intent(in)    :: z
+    real(dp)            , intent(in)    :: time
+
+    complex(dp) :: E_t
+    complex(dp) :: E_rz
+    real(dp)    :: envelope
+    real(dp)    :: cos_t
+    real(dp)    :: sin_t
+    real(dp)    :: z_ramp
+    real(dp)    :: z0_ramp
+    real(dp)    :: z_min
+    real(dp)    :: z_max
+    real(dp)    :: dz_ramp
+    real(dp) :: w_z
+    real(dp) :: inv_R_z
+    real(dp) :: psi_z
+
+    z0_ramp = this%z0_ramp
+    dz_ramp = this%dz_ramp
+
+    z_ramp = time*c0 + z0_ramp
+
+    z_min = z_ramp - 0.5_dp*dz_ramp
+    z_max = z_ramp + 0.5_dp*dz_ramp
+
+
+    envelope = EXP(-(z-z_ramp)**2/(2*dz_ramp**2))
+
+    E_t   = this%E_amp * envelope * (DCOS(this%freq*(time)) + Z_I*DSIN(this%freq*(time)))
+
+    w_z   = this%w0*SQRT(1.0d0 + (z/this%z_R)**2)
+    inv_R_z = z/(z**2 + this%z_R**2)
+    psi_z = ATAN(z/this%z_R)
+
+    E_rz = (this%w0/w_z)*EXP(-r**2/w_z**2)*(DCOS(this%k*z + (this%k*r**2)*(0.5d0*inv_R_z)-psi_z) &
+                                      - Z_I*DSIN(this%k*z + (this%k*r**2)*(0.5d0*inv_R_z)-psi_z))
+
+    this%E_rzt = E_t * E_rz
+
+end subroutine compute_time_space_profile
+
 
 !###################################################################################################
 !######################################GENERAL SUBS#################################################
