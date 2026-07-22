@@ -15,6 +15,14 @@ FC := $(MPI_FC)
 FFLAGS += -DUSE_MPI
 endif
 
+ifdef BLAS_DIR
+LIBS ?= $(BLAS_DIR)/libopenblas.so
+RPATH_FLAG ?= -Wl,-rpath=$(BLAS_DIR)
+else
+LIBS ?= -lblas -llapack
+RPATH_FLAG ?=
+endif
+
 BUILD ?= ../../build
 PROJECT ?= design
 OBJ_DIR ?= $(BUILD)/$(PROJECT)/obj
@@ -23,6 +31,8 @@ BIN_DIR ?= $(BUILD)/bin
 
 SRC:=constants_mod.f90
 SRC+=input_mod.f90
+SRC+=lbfgsb_all_mod.f90
+SRC+=opt_algo_mod.f90
 SRC+=rs_vec_base_mod.f90
 SRC+=rs_vec_dimensions_mod.f90
 SRC+=design_base_mod.f90
@@ -38,7 +48,6 @@ SRC+=target_source_mod.f90
 SRC+=rs_operations_subs_mod.f90
 SRC+=bicgstab_mod.f90
 SRC+=optimization_problem_mod.f90
-# SRC+=mma_mod.f90
 
 MAIN=ch_inv_design.f90
 OBJ=$(addprefix $(OBJ_DIR)/,$(SRC:.f90=.o))
@@ -57,7 +66,7 @@ $(OBJ_DIR)/%.o: %.f90 | $(OBJ_DIR) $(MOD_DIR)
 
 
 $(EXC): $(OBJ) | $(BIN_DIR)
-	$(FC) -o $@ $^ ${FFLAGS}
+	$(FC) $(RPATH_FLAG) -o $@ $^ ${FFLAGS} ${LIBS}
 
 clean:
 	rm -rf $(OBJ_DIR) $(MOD_DIR) $(EXC)

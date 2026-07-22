@@ -22,6 +22,7 @@ module optimization_problem_mod
     type TOptPrblm  
 
         logical             :: is_complex
+        logical             :: set_w_0
         type(TOperator)     :: A_op
         type(TMedium_eps_r) :: eps_r
         integer             :: id
@@ -41,7 +42,8 @@ module optimization_problem_mod
         real(dp)            :: eta_rho
         real(dp)            :: beta_rho
         real(dp)            :: w_total
-
+        real(dp)            :: fom_partial
+        
         class(TRSvec), allocatable :: f_vec
         class(TRSvec), allocatable :: f_vec_new
         class(TRSvec), allocatable :: f_adj_vec(:)
@@ -54,8 +56,8 @@ module optimization_problem_mod
         complex(dp)  , allocatable :: dA(:,:,:)
         real(dp)     , allocatable :: grad(:,:,:)
         real(dp)     , allocatable :: w_dL(:) ! Weigh of the objective 
+        real(dp)     , allocatable :: w_0(:) !initial weight of the objective function
                                               ! function gradient
-
     contains
 
         procedure :: init_optprblm
@@ -116,31 +118,33 @@ subroutine init_optprblm(this, id,dimensions, dr, freq, eps_Re, eps_Im, eta, bou
     else
         this%is_complex = .false.
     end if
-    
+
+    this%set_w_0 = .false.
+
     this%f_vec     = rs_vec_factory(dimensions)
     this%f_vec_new = rs_vec_factory(dimensions)
     this%Af_vec    = rs_vec_factory(dimensions)
     this%j_src     = rs_vec_factory(dimensions)
     this%j_trg     = rs_vec_factory(dimensions)
 
+    
     call this%f_vec%init(grid_Ndims, dr, dimensions, freq, n_der)
+    
+    
     call this%f_vec_new%init(grid_Ndims, dr, dimensions, freq, n_der)
     call this%Af_vec%init(grid_Ndims, dr, dimensions, freq, n_der)
     call this%j_src%init(grid_Ndims, dr, dimensions, freq, n_der)
     call this%j_trg%init(grid_Ndims, dr, dimensions, freq, n_der)
-
     call this%A_op%init_operator(dr, freq, dimensions, grid_Ndims, n_pml, n_der, &
                                  boundaries, mpi_dims, mpi_coords)
 
     call allocate_multidim(array = this%opt_region, dim = dimensions, i_max = this%nx, &
                            j_max = this%ny, k_max = this%nz)
-
     call allocate_multidim(array = this%grad, dim = dimensions, i_max = this%nx, &
                            j_max = this%ny, k_max = this%nz)
-
     call allocate_multidim(array = this%dA, dim = dimensions, i_max = this%nx, &
                            j_max = this%ny, k_max = this%nz)
-
+    
     this%opt_region = .false.
     this%grad = 0.0_dp
     this%dA   = Z_0
@@ -161,15 +165,22 @@ subroutine init_optprblm(this, id,dimensions, dr, freq, eps_Re, eps_Im, eta, bou
     if (allocated(this%f_adj_vec))     deallocate(this%f_adj_vec)
     if (allocated(this%f_adj_vec_new)) deallocate(this%f_adj_vec_new)
 
-    allocate(this%f_adj_vec, source=rs_vec_factory_array(dim=dimensions, n_max=this%n_trg))
-    allocate(this%f_adj_vec_new, source=rs_vec_factory_array(dim=dimensions, n_max=this%n_trg))
+   
+    this%f_adj_vec = rs_vec_factory_array(dim=dimensions, n_max=this%n_trg)
+    this%f_adj_vec_new = rs_vec_factory_array(dim=dimensions, n_max=this%n_trg)
 
+    ! allocate(this%f_adj_vec, source=rs_vec_factory_array(dim=dimensions, n_max=this%n_trg))
+    ! allocate(this%f_adj_vec_new, source=rs_vec_factory_array(dim=dimensions, n_max=this%n_trg))
+    
     do i =1, this%n_trg
         call this%f_adj_vec(i)%init(grid_Ndims, dr, dimensions, freq, n_der)
         call this%f_adj_vec_new(i)%init(grid_Ndims, dr, dimensions, freq, n_der)
     end do
 
     if (.not. allocated(this%w_dL)) allocate(this%w_dL(this%n_trg))
+    if (.not. allocated(this%w_0)) allocate(this%w_0(this%n_trg))
+
+    this%w_0 = 1.0d0
 
 end subroutine init_optprblm
 
@@ -191,6 +202,7 @@ subroutine kill_optprblm(this)
 
     if (allocated(this%opt_region)) deallocate(this%opt_region)
     if (allocated(this%w_dL))       deallocate(this%w_dL)
+    if (allocated(this%w_0))       deallocate(this%w_0)
     if (allocated(this%grad))      deallocate(this%grad)
     if (allocated(this%dA))         deallocate(this%dA)
     call this%eps_r%kill_medium()
@@ -326,19 +338,23 @@ subroutine compute_gradient(this, design)
 
         if(this%is_complex) then
             do i =1, nx
-                df_drho   = C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i)-eta_p))**2)
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i)-eta_p)) + C2
-                eta       = (this%eta_max - this%eta_min)*func_rho + this%eta_min
-                kappa     = this%kappa_max*func_rho
-                deps_drho = 2.0d0*eps0*df_drho*((this%eta_max-this%eta_min)*(Z_ONE*eta-Z_I*kappa)+ &
-                                                 this%kappa_max*(-Z_ONE*kappa-Z_I*eta))
-                this%dA(i,1,1) = -Z_I * w0 * deps_drho 
+                if (this%opt_region(i,1,1)) then
+                    df_drho   = C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i)-eta_p))**2)
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i)-eta_p)) + C2
+                    eta       = (this%eta_max - this%eta_min)*func_rho + this%eta_min
+                    kappa     = this%kappa_max*func_rho
+                    deps_drho = 2.0d0*eps0*df_drho*((this%eta_max-this%eta_min)*(Z_ONE*eta-Z_I*kappa)+ &
+                                                    this%kappa_max*(-Z_ONE*kappa-Z_I*eta))
+                    this%dA(i,1,1) = -Z_I * w0 * deps_drho 
+                end if
             end do
         else
             do i = 1, nx
-                df_drho   =   C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i)-eta_p))**2)
-                deps_drho =   Z_ONE * df_drho * (eps_r*eps0 - eps0)
-                this%dA(i,1,1) = -Z_I * w0 * deps_drho
+                if (this%opt_region(i,1,1)) then
+                    df_drho   =   C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i)-eta_p))**2)
+                    deps_drho =   Z_ONE * df_drho * (eps_r*eps0 - eps0)
+                    this%dA(i,1,1) = -Z_I * w0 * deps_drho
+                end if
             end do
         end if
 
@@ -346,21 +362,25 @@ subroutine compute_gradient(this, design)
             this%grad(i,1,1) = 0.0d0
             do n = 1, this%n_trg
 
-                this%grad(i,1,1) = this%grad(i,1,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_x(i) * this%dA(i,1,1) * &
-                (f_vec%pl_x(i) + f_vec%mi_x(i)), kind=dp)
+                if (this%opt_region(i,1,1)) then
 
-                this%grad(i,1,1) = this%grad(i,1,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_y(i) * this%dA(i,1,1) * &
-                (f_vec%pl_y(i) + f_vec%mi_y(i)), kind=dp)
+                    this%grad(i,1,1) = this%grad(i,1,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_x(i) * this%dA(i,1,1) * &
+                    (f_vec%pl_x(i) + f_vec%mi_x(i)), kind=dp)
 
-                this%grad(i,1,1) = this%grad(i,1,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_x(i) * this%dA(i,1,1) * &
-                (f_vec%pl_x(i) + f_vec%mi_x(i)), kind=dp)
+                    this%grad(i,1,1) = this%grad(i,1,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_y(i) * this%dA(i,1,1) * &
+                    (f_vec%pl_y(i) + f_vec%mi_y(i)), kind=dp)
 
-                this%grad(i,1,1) = this%grad(i,1,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_y(i) * this%dA(i,1,1) * &
-                (f_vec%pl_y(i) + f_vec%mi_y(i)), kind=dp)
+                    this%grad(i,1,1) = this%grad(i,1,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_x(i) * this%dA(i,1,1) * &
+                    (f_vec%pl_x(i) + f_vec%mi_x(i)), kind=dp)
+
+                    this%grad(i,1,1) = this%grad(i,1,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_y(i) * this%dA(i,1,1) * &
+                    (f_vec%pl_y(i) + f_vec%mi_y(i)), kind=dp)
+
+                end if
 
             end do  
         end do
@@ -379,21 +399,33 @@ subroutine compute_gradient(this, design)
         if (this%is_complex) then
             do j = 1, ny
             do i = 1, nx
-                df_drho   = C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j)-eta_p))**2)
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j)-eta_p)) + C2
-                eta       = (this%eta_max - this%eta_min)*func_rho + this%eta_min
-                kappa     = this%kappa_max*func_rho
-                deps_drho = 2.0d0*eps0*df_drho*((this%eta_max-this%eta_min)*(Z_ONE*eta-Z_I*kappa)+ &
-                                                    this%kappa_max*(-Z_ONE*kappa-Z_I*eta))
-                this%dA(i,j,1) = -Z_I * w0 * deps_drho 
+
+                if (this%opt_region(i,j,1)) then
+
+                    df_drho   = C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j)-eta_p))**2)
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j)-eta_p)) + C2
+                    eta       = (this%eta_max - this%eta_min)*func_rho + this%eta_min
+                    kappa     = this%kappa_max*func_rho
+                    deps_drho = 2.0d0*eps0*df_drho*((this%eta_max-this%eta_min)*(Z_ONE*eta-Z_I*kappa)+ &
+                                                        this%kappa_max*(-Z_ONE*kappa-Z_I*eta))
+                    this%dA(i,j,1) = -Z_I * w0 * deps_drho 
+
+                end if
+
             end do
             end do
         else
             do j = 1, ny
             do i = 1, nx
-                df_drho   =   C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j)-eta_p))**2)
-                deps_drho =   Z_ONE * df_drho * (eps_r*eps0 - eps0)
-                this%dA(i,j,1) = -Z_I * w0 * deps_drho 
+
+                if (this%opt_region(i,j,1)) then
+
+                    df_drho   =   C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j)-eta_p))**2)
+                    deps_drho =   Z_ONE * df_drho * (eps_r*eps0 - eps0)
+                    this%dA(i,j,1) = -Z_I * w0 * deps_drho 
+                
+                end if
+
             end do
             end do
 
@@ -404,29 +436,33 @@ subroutine compute_gradient(this, design)
             this%grad(i,j,1) = 0.0d0
             do n = 1, this%n_trg
 
-                this%grad(i,j,1) = this%grad(i,j,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_x(i,j) * this%dA(i,j,1) * &
-                (f_vec%pl_x(i,j) + f_vec%mi_x(i,j)), kind=dp)
+                if (this%opt_region(i,j,1)) then
 
-                this%grad(i,j,1) = this%grad(i,j,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_y(i,j) * this%dA(i,j,1) * &
-                (f_vec%pl_y(i,j) + f_vec%mi_y(i,j)), kind=dp)
+                    this%grad(i,j,1) = this%grad(i,j,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_x(i,j) * this%dA(i,j,1) * &
+                    (f_vec%pl_x(i,j) + f_vec%mi_x(i,j)), kind=dp)
 
-                this%grad(i,j,1) = this%grad(i,j,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_z(i,j) * this%dA(i,j,1) * &
-                (f_vec%pl_z(i,j) + f_vec%mi_z(i,j)), kind=dp)
+                    this%grad(i,j,1) = this%grad(i,j,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_y(i,j) * this%dA(i,j,1) * &
+                    (f_vec%pl_y(i,j) + f_vec%mi_y(i,j)), kind=dp)
 
-                this%grad(i,j,1) = this%grad(i,j,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_x(i,j) * this%dA(i,j,1) * &
-                (f_vec%pl_x(i,j) + f_vec%mi_x(i,j)), kind=dp)
+                    this%grad(i,j,1) = this%grad(i,j,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_z(i,j) * this%dA(i,j,1) * &
+                    (f_vec%pl_z(i,j) + f_vec%mi_z(i,j)), kind=dp)
 
-                this%grad(i,j,1) = this%grad(i,j,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_y(i,j) * this%dA(i,j,1) * &
-                (f_vec%pl_y(i,j) + f_vec%mi_y(i,j)), kind=dp)
+                    this%grad(i,j,1) = this%grad(i,j,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_x(i,j) * this%dA(i,j,1) * &
+                    (f_vec%pl_x(i,j) + f_vec%mi_x(i,j)), kind=dp)
 
-                this%grad(i,j,1) = this%grad(i,j,1) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_z(i,j) * this%dA(i,j,1) * &
-                (f_vec%pl_z(i,j) + f_vec%mi_z(i,j)), kind=dp)
+                    this%grad(i,j,1) = this%grad(i,j,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_y(i,j) * this%dA(i,j,1) * &
+                    (f_vec%pl_y(i,j) + f_vec%mi_y(i,j)), kind=dp)
+
+                    this%grad(i,j,1) = this%grad(i,j,1) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_z(i,j) * this%dA(i,j,1) * &
+                    (f_vec%pl_z(i,j) + f_vec%mi_z(i,j)), kind=dp)
+
+                end if
 
             end do
         end do
@@ -448,13 +484,19 @@ subroutine compute_gradient(this, design)
             do k = 1, nz
             do j = 1, ny
             do i = 1, nx
-                df_drho   = C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j,k)-eta_p))**2)
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j,k)-eta_p)) + C2
-                eta       = (this%eta_max - this%eta_min)*func_rho + this%eta_min
-                kappa     = this%kappa_max*func_rho
-                deps_drho = 2.0d0*eps0*df_drho*((this%eta_max-this%eta_min)*(Z_ONE*eta-Z_I*kappa)+ &
-                                                    this%kappa_max*(-Z_ONE*kappa-Z_I*eta))
-                this%dA(i,j,k) = -Z_I * w0 * deps_drho 
+
+                if (this%opt_region(i,j,k)) then
+
+                    df_drho   = C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j,k)-eta_p))**2)
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j,k)-eta_p)) + C2
+                    eta       = (this%eta_max - this%eta_min)*func_rho + this%eta_min
+                    kappa     = this%kappa_max*func_rho
+                    deps_drho = 2.0d0*eps0*df_drho*((this%eta_max-this%eta_min)*(Z_ONE*eta-Z_I*kappa)+ &
+                                                        this%kappa_max*(-Z_ONE*kappa-Z_I*eta))
+                    this%dA(i,j,k) = -Z_I * w0 * deps_drho
+
+                end if
+
             end do
             end do
             end do
@@ -462,9 +504,15 @@ subroutine compute_gradient(this, design)
             do k = 1, nz
             do j = 1, ny
             do i = 1, nx
-                df_drho   =   C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j,k)-eta_p))**2)
-                deps_drho =   Z_ONE * df_drho * (eps_r*eps0 - eps0)
-                this%dA(i,j,k) = -Z_I * w0 * deps_drho 
+
+                if (this%opt_region(i,j,k)) then
+
+                    df_drho   =   C1*beta_p*(1.0/DCOSH(beta_p*(design%rho_conv(i,j,k)-eta_p))**2)
+                    deps_drho =   Z_ONE * df_drho * (eps_r*eps0 - eps0)
+                    this%dA(i,j,k) = -Z_I * w0 * deps_drho
+
+                end if
+
             end do
             end do
             end do
@@ -476,29 +524,33 @@ subroutine compute_gradient(this, design)
             this%grad(i,j,k) = 0.0d0
             do n = 1, this%n_trg
 
-                this%grad(i,j,k) = this%grad(i,j,k) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_x(i,j,k) * this%dA(i,j,k) * &
-                (f_vec%pl_x(i,j,k) + f_vec%mi_x(i,j,k)), kind=dp)
+                if (this%opt_region(i,j,k)) then
 
-                this%grad(i,j,k) = this%grad(i,j,k) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_y(i,j,k) * this%dA(i,j,k) * &
-                (f_vec%pl_y(i,j,k) + f_vec%mi_y(i,j,k)), kind=dp)
+                    this%grad(i,j,k) = this%grad(i,j,k) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_x(i,j,k) * this%dA(i,j,k) * &
+                    (f_vec%pl_x(i,j,k) + f_vec%mi_x(i,j,k)), kind=dp)
 
-                this%grad(i,j,k) = this%grad(i,j,k) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_z(i,j,k) * this%dA(i,j,k) * &
-                (f_vec%pl_z(i,j,k) + f_vec%mi_z(i,j,k)), kind=dp)
+                    this%grad(i,j,k) = this%grad(i,j,k) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_y(i,j,k) * this%dA(i,j,k) * &
+                    (f_vec%pl_y(i,j,k) + f_vec%mi_y(i,j,k)), kind=dp)
 
-                this%grad(i,j,k) = this%grad(i,j,k) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_x(i,j,k) * this%dA(i,j,k) * &
-                (f_vec%pl_x(i,j,k) + f_vec%mi_x(i,j,k)), kind=dp)
+                    this%grad(i,j,k) = this%grad(i,j,k) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%pl_z(i,j,k) * this%dA(i,j,k) * &
+                    (f_vec%pl_z(i,j,k) + f_vec%mi_z(i,j,k)), kind=dp)
 
-                this%grad(i,j,k) = this%grad(i,j,k) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_y(i,j,k) * this%dA(i,j,k) * &
-                (f_vec%pl_y(i,j,k) + f_vec%mi_y(i,j,k)), kind=dp)
+                    this%grad(i,j,k) = this%grad(i,j,k) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_x(i,j,k) * this%dA(i,j,k) * &
+                    (f_vec%pl_x(i,j,k) + f_vec%mi_x(i,j,k)), kind=dp)
 
-                this%grad(i,j,k) = this%grad(i,j,k) + real( &
-                1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_z(i,j,k) * this%dA(i,j,k) * &
-                (f_vec%pl_z(i,j,k) + f_vec%mi_z(i,j,k)), kind=dp)
+                    this%grad(i,j,k) = this%grad(i,j,k) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_y(i,j,k) * this%dA(i,j,k) * &
+                    (f_vec%pl_y(i,j,k) + f_vec%mi_y(i,j,k)), kind=dp)
+
+                    this%grad(i,j,k) = this%grad(i,j,k) + real( &
+                    1.0d0/this%w_dL(n) * f_adj_vec(n)%mi_z(i,j,k) * this%dA(i,j,k) * &
+                    (f_vec%pl_z(i,j,k) + f_vec%mi_z(i,j,k)), kind=dp)
+
+                end if
 
             end do
         end do
@@ -702,15 +754,19 @@ subroutine update_targets(this)
     integer :: n
     integer :: n_trg
 
-    this%w_total = 0.0d0
+    this%w_total     = 0.0d0
+    this%fom_partial = 0.0d0
 
     n_trg = 1
     do n = 1, this%n_src_trg
         if (this%src_trg(n)%is_a_target) then
-            call update_target(this%src_trg(n), this%f_vec_new, this%w_dL(n_trg), this%w_total)
+            call update_target(this%src_trg(n), this%f_vec_new, this%w_dL(n_trg), &
+                               this%w_0(n_trg), this%fom_partial, this%w_total, this%set_w_0)
             n_trg = n_trg + 1
         end if
     end do
+
+    this%set_w_0 = .false.
 
 end subroutine update_targets
 
