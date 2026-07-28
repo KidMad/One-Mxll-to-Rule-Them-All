@@ -223,6 +223,8 @@ subroutine write_2D_headers(detectors, n_detectors, print_det_step, time, &
     character(len=99) :: full_dirname
     integer           :: ierr, funit
 
+    character(len=99) :: cumulative_dirname
+    integer           :: icumulative, fcumulative
 
     if (myrank /= 0) return
 
@@ -257,6 +259,15 @@ subroutine write_2D_headers(detectors, n_detectors, print_det_step, time, &
             write(funit, '("# ' // trim(coor_write) // ' (nm)                   ' &
                             // trim(field_name) // ' (a.u.)")')
             close(funit)
+
+            if (print_det_step == 0) then
+                cumulative_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // &
+                "_line_cumulative.dat"
+
+                open(newunit=fcumulative, file=trim(cumulative_dirname), status='replace', &
+                action='write', iostat=icumulative)
+                close(fcumulative)
+            endif
 
         case (PLANE_XY_DETECTOR)
             
@@ -304,6 +315,10 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
     character(len=4)  :: field_name
     character(len=99) :: full_dirname
     integer           :: ierr, funit
+
+    character(len=99) :: cumulative_dirname
+    integer           :: fcumulative, ierr_cumulative
+
 
 #ifdef USE_MPI
     integer :: rank_iter, nprocs_mpi
@@ -378,8 +393,14 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
             field_name = detectors(i)%f_ch
             full_dirname = trim(directory) // "_" // trim(number) // &
                                 "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
-            
+
+            cumulative_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // &
+            "_line_cumulative.dat"
+
             open(newunit=funit, file=trim(full_dirname), status='old', &
+                    action='write', position='append', iostat=ierr)
+
+            open(newunit=fcumulative, file=trim(cumulative_dirname), status='old', &
                     action='write', position='append', iostat=ierr)
 
             select case (detectors(i)%field)
@@ -392,6 +413,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
                     x    = x*au_to_nm
                     write(funit, *) x , 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
+                    write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
                 end do
 
             case (Ey_FIELD)
@@ -402,6 +424,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
                     x    = x*au_to_nm
                     write(funit, *) x , 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
+                    write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
                 end do
 
             case (Ez_FIELD)
@@ -412,6 +435,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
                     x    = x*au_to_nm
                     write(funit, *) x , mxll%Ez(i_ndx,j_ndx)
+                    write(fcumulative, '(ES0.16,3X)', advance='no') mxll%Ez(i_ndx,j_ndx)
                 end do
     
             case (Hx_FIELD)
@@ -422,6 +446,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
                     x    = x*au_to_nm
                     write(funit, *) x , 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
+                    write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
                 end do
 
             case (Hy_FIELD)
@@ -432,6 +457,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
                     x    = x*au_to_nm
                     write(funit, *) x , 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
+                    write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
                 end do
 
             case (Hz_FIELD)
@@ -443,10 +469,16 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     x    = x*au_to_nm
                     write(funit, *) x , 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
                                                 mxll%Hz(i_ndx-1,j_ndx) + mxll%Hz(i_ndx,j_ndx-1))
+                    write(fcumulative, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
+                                                mxll%Hz(i_ndx-1,j_ndx) + mxll%Hz(i_ndx,j_ndx-1))
                 end do
     
             end select
+
+            write(fcumulative, *)
+
             close(funit)
+            close(fcumulative)
 
         case (LINE_Y_DETECTOR)
 
@@ -454,8 +486,14 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 full_dirname = trim(directory) // "_" // trim(number) // &
                                 "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
 
+                cumulative_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // &
+                "_line_cumulative.dat"
+
                 open(newunit=funit, file=trim(full_dirname), status='old', &
                         action='write', position='append', iostat=ierr)
+
+                open(newunit=fcumulative, file=trim(cumulative_dirname), status='old', &
+                action='write', position='append', iostat=ierr)
 
                 select case (detectors(i)%field)
 
@@ -467,6 +505,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                         y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
                         y    = y*au_to_nm
                         write(funit, *) y , 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
+                        write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
                     end do
 
                 case (Ey_FIELD)
@@ -477,6 +516,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                         y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
                         y    = y*au_to_nm
                         write(funit, *) y , 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
+                        write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
                     end do
 
                 case (Ez_FIELD)
@@ -487,6 +527,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                         y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
                         y    = y*au_to_nm
                         write(funit, *) y , mxll%Ez(i_ndx,j_ndx)
+                        write(fcumulative, '(ES0.16,3X)', advance='no') mxll%Ez(i_ndx,j_ndx)
                     end do
 
                 case (Hx_FIELD)
@@ -497,6 +538,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                         y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
                         y    = y*au_to_nm
                         write(funit, *) y , 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
+                        write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
                     end do
 
                 case (Hy_FIELD)
@@ -507,6 +549,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                         y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
                         y    = y*au_to_nm
                         write(funit, *) y , 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
+                        write(fcumulative, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
                     end do
 
                 case (Hz_FIELD)
@@ -518,11 +561,16 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                         y    = y*au_to_nm
                         write(funit, *) y , 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
                                                 mxll%Hz(i_ndx-1,j_ndx) + mxll%Hz(i_ndx,j_ndx-1))
+                        write(fcumulative, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
+                                                mxll%Hz(i_ndx-1,j_ndx) + mxll%Hz(i_ndx,j_ndx-1))
                     end do
 
                 end select
-                
+
+                write(fcumulative, *)
+
                 close(funit)
+                close(fcumulative)
 
         case (PLANE_XY_DETECTOR)
 
