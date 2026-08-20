@@ -195,13 +195,14 @@ end subroutine write_1D_field
 !###################################################################################################
 
 subroutine write_2D_headers(detectors, n_detectors, print_det_step, time, &
-                            dr, grid_Ndims, mpi_dims, myrank)
+                            dr, grid_Ndims, mpi_dims, mpi_coords, myrank)
 
     type(TDetector) , intent(in) :: detectors(n_detectors)
     integer         , intent(in) :: n_detectors
     integer         , intent(in) :: myrank
     integer         , intent(in) :: grid_Ndims(3)
     integer         , intent(in) :: mpi_dims(3)
+    integer         , intent(in) :: mpi_coords(3)
     integer         , intent(in) :: print_det_step
     real(dp)        , intent(in) :: dr
     real(dp)        , intent(in) :: time
@@ -223,8 +224,13 @@ subroutine write_2D_headers(detectors, n_detectors, print_det_step, time, &
     character(len=99) :: full_dirname
     integer           :: ierr, funit
 
-
     if (myrank /= 0) return
+
+    nx = grid_Ndims(1)
+    ny = grid_Ndims(2)
+
+    nx_tot = grid_Ndims(1)*mpi_dims(1)
+    ny_tot = grid_Ndims(2)*mpi_dims(2)
 
     do i = 1, n_detectors
 
@@ -233,31 +239,55 @@ subroutine write_2D_headers(detectors, n_detectors, print_det_step, time, &
         write(print_number, '(I9.9)') print_det_step
 
         select case(detectors(i)%detector_type)
-        case (LINE_X_DETECTOR, LINE_Y_DETECTOR)
-            
-            if (detectors(i)%detector_type == LINE_X_DETECTOR) then
-                coor_head  = "y"
-                coor_write = "x"
+        case (LINE_X_DETECTOR)
+            if (print_det_step == 0) then
+                full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_x.dat"
+        
+                open(newunit=funit, file=trim(full_dirname), status='replace', &
+                    action='write', iostat=ierr)
+
                 y = detectors(i)%j_min*dr - int(mpi_dims(2)*grid_Ndims(2)/2)*dr
-                coor_val  = y*au_to_nm
-            else if (detectors(i)%detector_type == LINE_Y_DETECTOR) then
-                coor_head  = "x"
-                coor_write = "y"
+
+                write(funit, '("# Direction = ", A, "   Shift-Y = ", F0.3, " (nm)")') "x", y*au_to_nm
+                write(funit, '(A)', advance='no') '# '
+
+                do n = 1, detectors(i)%nd
+                    i_ndx = detectors(i)%indx_list(n,1)
+                    j_ndx = detectors(i)%indx_list(n,2)
+                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
+                    x    = x*au_to_nm
+                    write(funit, '(F0.3,3X)', advance='no') x
+                end do
+
+                write(funit, *)
+                write(funit, '("# Time (a.u.)   ", A)') trim(field_name)
+                close(funit)
+            endif
+        case (LINE_Y_DETECTOR)
+                if (print_det_step == 0) then
+                full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_y.dat"
+        
+                open(newunit=funit, file=trim(full_dirname), status='replace', &
+                    action='write', iostat=ierr)
+
                 x = detectors(i)%i_min*dr - int(mpi_dims(1)*grid_Ndims(1)/2)*dr
-                coor_val  = x*au_to_nm
-            end if
 
-            full_dirname = trim(directory) // "_" // trim(number) // &
-                                "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
-    
-            open(newunit=funit, file=trim(full_dirname), status='replace', &
-                action='write', iostat=ierr)
-            write(funit, '("# Time = ", ES18.8, " (a.u.), ' // trim(coor_head) // &
-                            ' = ", F12.6, " (nm)")') time, coor_val
-            write(funit, '("# ' // trim(coor_write) // ' (nm)                   ' &
-                            // trim(field_name) // ' (a.u.)")')
-            close(funit)
+                write(funit, '("# Direction = ", A,"   Shift-X = ", F0.3, " (nm)")') "y", x*au_to_nm
+                write(funit, '(A)', advance='no') '# '
 
+                do n = 1, detectors(i)%nd
+                    i_ndx = detectors(i)%indx_list(n,1)
+                    j_ndx = detectors(i)%indx_list(n,2)
+                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
+                    y    = y*au_to_nm
+                    write(funit, '(F0.3,3X)', advance='no') y
+                end do
+
+                write(funit, *)
+                write(funit, '("# Time (a.u.)   ", A)') trim(field_name)
+                close(funit)
+            endif
+        
         case (PLANE_XY_DETECTOR)
             
             full_dirname = trim(directory) // "_" // trim(number) // &
@@ -304,6 +334,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
     character(len=4)  :: field_name
     character(len=99) :: full_dirname
     integer           :: ierr, funit
+
 
 #ifdef USE_MPI
     integer :: rank_iter, nprocs_mpi
@@ -376,12 +407,12 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
         case (LINE_X_DETECTOR)
 
             field_name = detectors(i)%f_ch
-            full_dirname = trim(directory) // "_" // trim(number) // &
-                                "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
-            
+            full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_x.dat"
+
             open(newunit=funit, file=trim(full_dirname), status='old', &
                     action='write', position='append', iostat=ierr)
 
+            write(funit, '(ES0.16,3X)', advance='no') time
             select case (detectors(i)%field)
 
             case (Ex_FIELD)
@@ -389,9 +420,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 do n = 1, detectors(i)%nd
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
                 end do
 
             case (Ey_FIELD)
@@ -399,9 +428,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 do n = 1, detectors(i)%nd
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
                 end do
 
             case (Ez_FIELD)
@@ -409,9 +436,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 do n = 1, detectors(i)%nd
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , mxll%Ez(i_ndx,j_ndx)
+                    write(funit, '(ES0.16,3X)', advance='no') mxll%Ez(i_ndx,j_ndx)
                 end do
     
             case (Hx_FIELD)
@@ -419,9 +444,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 do n = 1, detectors(i)%nd
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
                 end do
 
             case (Hy_FIELD)
@@ -429,9 +452,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 do n = 1, detectors(i)%nd
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
                 end do
 
             case (Hz_FIELD)
@@ -439,23 +460,24 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                 do n = 1, detectors(i)%nd
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
                                                 mxll%Hz(i_ndx-1,j_ndx) + mxll%Hz(i_ndx,j_ndx-1))
                 end do
     
             end select
+
+            write(funit, *)
             close(funit)
 
         case (LINE_Y_DETECTOR)
 
                 field_name = detectors(i)%f_ch
-                full_dirname = trim(directory) // "_" // trim(number) // &
-                                "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
+                full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_y.dat"
 
                 open(newunit=funit, file=trim(full_dirname), status='old', &
                         action='write', position='append', iostat=ierr)
+
+                write(funit, '(ES0.16,3X)', advance='no') time
 
                 select case (detectors(i)%field)
 
@@ -464,9 +486,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     do n = 1, detectors(i)%nd
                         i_ndx = detectors(i)%indx_list(n,1)
                         j_ndx = detectors(i)%indx_list(n,2)
-                        y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                        y    = y*au_to_nm
-                        write(funit, *) y , 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
+                        write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx)+mxll%Ex(i_ndx,j_ndx))
                     end do
 
                 case (Ey_FIELD)
@@ -474,9 +494,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     do n = 1, detectors(i)%nd
                         i_ndx = detectors(i)%indx_list(n,1)
                         j_ndx = detectors(i)%indx_list(n,2)
-                        y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                        y    = y*au_to_nm
-                        write(funit, *) y , 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
+                        write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1)+mxll%Ey(i_ndx,j_ndx))
                     end do
 
                 case (Ez_FIELD)
@@ -484,9 +502,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     do n = 1, detectors(i)%nd
                         i_ndx = detectors(i)%indx_list(n,1)
                         j_ndx = detectors(i)%indx_list(n,2)
-                        y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                        y    = y*au_to_nm
-                        write(funit, *) y , mxll%Ez(i_ndx,j_ndx)
+                        write(funit, '(ES0.16,3X)', advance='no') mxll%Ez(i_ndx,j_ndx)
                     end do
 
                 case (Hx_FIELD)
@@ -494,9 +510,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     do n = 1, detectors(i)%nd
                         i_ndx = detectors(i)%indx_list(n,1)
                         j_ndx = detectors(i)%indx_list(n,2)
-                        y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                        y    = y*au_to_nm
-                        write(funit, *) y , 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
+                        write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hx(i_ndx,j_ndx) + mxll%Hx(i_ndx,j_ndx-1))
                     end do
 
                 case (Hy_FIELD)
@@ -504,9 +518,7 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     do n = 1, detectors(i)%nd
                         i_ndx = detectors(i)%indx_list(n,1)
                         j_ndx = detectors(i)%indx_list(n,2)
-                        y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                        y    = y*au_to_nm
-                        write(funit, *) y , 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
+                        write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Hy(i_ndx,j_ndx) + mxll%Hy(i_ndx-1,j_ndx))
                     end do
 
                 case (Hz_FIELD)
@@ -514,14 +526,13 @@ subroutine write_2D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     do n = 1, detectors(i)%nd
                         i_ndx = detectors(i)%indx_list(n,1)
                         j_ndx = detectors(i)%indx_list(n,2)
-                        y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                        y    = y*au_to_nm
-                        write(funit, *) y , 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
+                        write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx) + mxll%Hz(i_ndx-1,j_ndx-1) +&
                                                 mxll%Hz(i_ndx-1,j_ndx) + mxll%Hz(i_ndx,j_ndx-1))
                     end do
 
                 end select
-                
+
+                write(funit, *)
                 close(funit)
 
         case (PLANE_XY_DETECTOR)
@@ -631,13 +642,14 @@ end subroutine write_2D_field
 !###################################################################################################
 
 subroutine write_3D_headers(detectors, n_detectors, print_det_step, time, &
-                            dr, grid_Ndims, mpi_dims, myrank)
+                            dr, grid_Ndims, mpi_dims, mpi_coords, myrank)
 
     type(TDetector) , intent(in) :: detectors(n_detectors)
     integer         , intent(in) :: n_detectors
     integer         , intent(in) :: myrank
     integer         , intent(in) :: grid_Ndims(3)
     integer         , intent(in) :: mpi_dims(3)
+    integer         , intent(in) :: mpi_coords(3)
     integer         , intent(in) :: print_det_step
     real(dp)        , intent(in) :: dr
     real(dp)        , intent(in) :: time
@@ -663,6 +675,14 @@ subroutine write_3D_headers(detectors, n_detectors, print_det_step, time, &
 
     if (myrank /= 0) return
 
+    nx = grid_Ndims(1)
+    ny = grid_Ndims(2)
+    nz = grid_Ndims(3)
+    
+    nx_tot = grid_Ndims(1)*mpi_dims(1)
+    ny_tot = grid_Ndims(2)*mpi_dims(2)
+    nz_tot = grid_Ndims(3)*mpi_dims(3)
+
     do i = 1, n_detectors
 
         field_name = detectors(i)%f_ch
@@ -670,40 +690,87 @@ subroutine write_3D_headers(detectors, n_detectors, print_det_step, time, &
         write(print_number, '(I9.9)') print_det_step
 
         select case(detectors(i)%detector_type)
-        case (LINE_X_DETECTOR, LINE_Y_DETECTOR, LINE_Z_DETECTOR)
-            if (detectors(i)%detector_type == LINE_X_DETECTOR) then
-                coor_head1 = "y" ; coor_head2 = "z"
-                coor_write1 = "x"
+        case (LINE_X_DETECTOR)
+            if (print_det_step == 0) then
+                full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_x.dat"
+
+                open(newunit=funit, file=trim(full_dirname), status='replace', &
+                    action='write', iostat=ierr)
+
                 y = detectors(i)%j_min*dr - int(mpi_dims(2)*grid_Ndims(2)/2)*dr
                 z = detectors(i)%k_min*dr - int(mpi_dims(3)*grid_Ndims(3)/2)*dr
-                coor_val1  = y*au_to_nm
-                coor_val2  = z*au_to_nm
-            else if (detectors(i)%detector_type == LINE_Y_DETECTOR) then
-                coor_head1 = "z" ; coor_head2 = "x"
-                coor_write1 = "y"
-                x = detectors(i)%i_min*dr - int(mpi_dims(1)*grid_Ndims(1)/2)*dr
-                coor_val1  = z*au_to_nm
-                coor_val2  = x*au_to_nm
-            else if (detectors(i)%detector_type == LINE_Z_DETECTOR) then
-                coor_head1 = "x" ; coor_head2 = "y"
-                coor_write1 = "z"
-                z = detectors(i)%k_min*dr - int(mpi_dims(3)*grid_Ndims(3)/2)*dr
-                coor_val1  = x*au_to_nm
-                coor_val2  = y*au_to_nm
-            end if
 
-            full_dirname = trim(directory) // "_" // trim(number) // &
-                                "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
-    
-            open(newunit=funit, file=trim(full_dirname), status='replace', &
-                action='write', iostat=ierr)
-            write(funit, '("# Time = ", ES18.8, " (a.u.), ' // trim(coor_head1) // &
-                            ' = ", F12.6, " (nm), ' // trim(coor_head2) // &
-                            ' = ", F12.6, " (nm)")') time, coor_val1, coor_val2
-            write(funit, '("# ' // trim(coor_write1) // ' (nm)                   ' &
-                            // trim(coor_write2) // ' (nm)                   ' &
-                            // trim(field_name) // ' (a.u.)")')
-            close(funit)
+                write(funit, '("# Direction = ", A, "   Shift-Y = ", F0.3, " (nm)", "   Shift-Z = ", F0.3, " (nm)")') "x", y*au_to_nm, z*au_to_nm
+                write(funit, '(A)', advance='no') '# '
+
+                do n = 1, detectors(i)%nd
+                    i_ndx = detectors(i)%indx_list(n,1)
+                    j_ndx = detectors(i)%indx_list(n,2)
+                    k_ndx = detectors(i)%indx_list(n,3)
+                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
+                    x    = x*au_to_nm
+                    write(funit, '(F0.3,3X)', advance='no') x
+                end do
+                
+                write(funit, *)
+                write(funit, '("# Time (a.u.)   ", A)') trim(field_name)
+                close(funit)
+            end if
+        case (LINE_Y_DETECTOR)
+            if (print_det_step == 0) then
+                full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_y.dat"
+
+                open(newunit=funit, file=trim(full_dirname), status='replace', &
+                    action='write', iostat=ierr)
+
+                x = detectors(i)%i_min*dr - int(mpi_dims(1)*grid_Ndims(1)/2)*dr
+                z = detectors(i)%k_min*dr - int(mpi_dims(3)*grid_Ndims(3)/2)*dr
+
+                write(funit, '("# Direction = ", A, "   Shift-X = ", F0.3, " (nm)", "   Shift-Z = ", F0.3, " (nm)")') "y", x*au_to_nm, z*au_to_nm
+                write(funit, '(A)', advance='no') '# '
+                
+                do n = 1, detectors(i)%nd
+                    i_ndx = detectors(i)%indx_list(n,1)
+                    j_ndx = detectors(i)%indx_list(n,2)
+                    k_ndx = detectors(i)%indx_list(n,3)
+                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
+                    y    = y*au_to_nm
+                    write(funit, '(F0.3,3X)', advance='no') y
+                end do
+
+                write(funit, *)
+                write(funit, '("# Time (a.u.)   ", A)') trim(field_name)
+                close(funit)
+            endif
+
+                
+        case (LINE_Z_DETECTOR)
+            if (print_det_step == 0) then
+                full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_z.dat"
+
+                open(newunit=funit, file=trim(full_dirname), status='replace', &
+                    action='write', iostat=ierr)
+
+                y = detectors(i)%j_min*dr - int(mpi_dims(2)*grid_Ndims(2)/2)*dr
+                x = detectors(i)%i_min*dr - int(mpi_dims(1)*grid_Ndims(1)/2)*dr
+                
+                write(funit, '("# Direction = ", A, "   Shift-X = ", F0.3, " (nm)", "   Shift-Y = ", F0.3, " (nm)")') "z", x*au_to_nm, y*au_to_nm
+                write(funit, '(A)', advance='no') '# '
+                
+                do n = 1, detectors(i)%nd
+                    i_ndx = detectors(i)%indx_list(n,1)
+                    j_ndx = detectors(i)%indx_list(n,2)
+                    k_ndx = detectors(i)%indx_list(n,3)
+                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
+                    z    = z*au_to_nm
+                    write(funit, '(F0.3,3X)', advance='no') z
+                end do
+
+                write(funit, *)
+                write(funit, '("# Time (a.u.)   ", A)') trim(field_name)
+                close(funit)
+            endif
+
 
         case (PLANE_XY_DETECTOR, PLANE_YZ_DETECTOR, PLANE_ZX_DETECTOR)
             
@@ -855,11 +922,12 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
 
             field_name = detectors(i)%f_ch
 
-            full_dirname = trim(directory) // "_" // trim(number) // &
-                               "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
+            full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_x.dat"
 
             open(newunit=funit, file=trim(full_dirname), status='old', &
                 action='write', position='append', iostat=ierr)
+
+            write(funit, '(ES0.16,3X)', advance='no') time
 
             select case(detectors(i)%field)
             case (Ex_FIELD)
@@ -868,9 +936,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Ex(i_ndx-1,j_ndx,k_ndx)+mxll%Ex(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx,k_ndx)+mxll%Ex(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Ey_FIELD)
@@ -878,9 +944,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Ey(i_ndx,j_ndx-1,k_ndx)+mxll%Ey(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1,k_ndx)+mxll%Ey(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Ez_FIELD)
@@ -889,9 +953,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.5*(mxll%Ez(i_ndx,j_ndx,k_ndx-1)+mxll%Ez(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ez(i_ndx,j_ndx,k_ndx-1)+mxll%Ez(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Hx_FIELD)
@@ -900,9 +962,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.25*(mxll%Hx(i_ndx,j_ndx-1,k_ndx) + mxll%Hx(i_ndx,j_ndx,k_ndx) + &
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hx(i_ndx,j_ndx-1,k_ndx) + mxll%Hx(i_ndx,j_ndx,k_ndx) + &
                                                 mxll%Hx(i_ndx,j_ndx,k_ndx-1) + mxll%Hx(i_ndx,j_ndx-1,k_ndx-1))
                 end do                
 
@@ -912,9 +972,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.25*(mxll%Hy(i_ndx-1,j_ndx,k_ndx) + mxll%Hy(i_ndx,j_ndx,k_ndx) +&
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hy(i_ndx-1,j_ndx,k_ndx) + mxll%Hy(i_ndx,j_ndx,k_ndx) +&
                                                 mxll%Hy(i_ndx,j_ndx,k_ndx-1) + mxll%Hy(i_ndx-1,j_ndx,k_ndx-1))
                 end do
 
@@ -924,25 +982,24 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    x    = (i_ndx+nx*mpi_coords(1))*dr - int(nx_tot/2)*dr
-                    x    = x*au_to_nm
-                    write(funit, *) x , 0.25*(mxll%Hz(i_ndx,j_ndx,k_ndx) + mxll%Hz(i_ndx-1,j_ndx,k_ndx) + &
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx,k_ndx) + mxll%Hz(i_ndx-1,j_ndx,k_ndx) + &
                                                 mxll%Hz(i_ndx,j_ndx-1,k_ndx) + mxll%Hz(i_ndx-1,j_ndx-1,k_ndx))
                 end do
 
             end select
 
+            write(funit, *)
             close(funit)
 
         case (LINE_Y_DETECTOR)
 
             field_name = detectors(i)%f_ch
-            full_dirname = trim(directory) // "_" // trim(number) // &
-                           "/" // trim(field_name) // "_line_" // trim(print_number) // ".dat"
+            full_dirname = trim(directory) // "_" // trim(number) // "/" // trim(field_name) // "_line_y.dat"
 
             open(newunit=funit, file=trim(full_dirname), status='old', &
                      action='write', position='append', iostat=ierr)
 
+            write(funit, '(ES0.16,3X)', advance='no') time
             select case(detectors(i)%field)
 
             case (Ex_FIELD)
@@ -951,9 +1008,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                    y    = y*au_to_nm
-                    write(funit, *) y , 0.5*(mxll%Ex(i_ndx-1,j_ndx,k_ndx)+mxll%Ex(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx,k_ndx)+mxll%Ex(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Ey_FIELD)
@@ -962,9 +1017,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                    y    = y*au_to_nm
-                    write(funit, *) y , 0.5*(mxll%Ey(i_ndx,j_ndx-1,k_ndx)+mxll%Ey(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1,k_ndx)+mxll%Ey(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Ez_FIELD)
@@ -973,9 +1026,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                    y    = y*au_to_nm
-                    write(funit, *) y , 0.5*(mxll%Ez(i_ndx,j_ndx,k_ndx-1)+mxll%Ez(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ez(i_ndx,j_ndx,k_ndx-1)+mxll%Ez(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Hx_FIELD)
@@ -984,9 +1035,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                    y    = y*au_to_nm
-                    write(funit, *) y , 0.25*(mxll%Hx(i_ndx,j_ndx-1,k_ndx) + mxll%Hx(i_ndx,j_ndx,k_ndx) +&
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hx(i_ndx,j_ndx-1,k_ndx) + mxll%Hx(i_ndx,j_ndx,k_ndx) +&
                                                 mxll%Hx(i_ndx,j_ndx,k_ndx-1) + mxll%Hx(i_ndx,j_ndx-1,k_ndx-1))
                 end do
 
@@ -996,9 +1045,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                    y    = y*au_to_nm
-                    write(funit, *) y , 0.25*(mxll%Hy(i_ndx-1,j_ndx,k_ndx) + mxll%Hy(i_ndx,j_ndx,k_ndx) +&
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hy(i_ndx-1,j_ndx,k_ndx) + mxll%Hy(i_ndx,j_ndx,k_ndx) +&
                                                 mxll%Hy(i_ndx,j_ndx,k_ndx-1) + mxll%Hy(i_ndx-1,j_ndx,k_ndx-1))
                 end do
 
@@ -1008,14 +1055,13 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    y    = (j_ndx+ny*mpi_coords(2))*dr - int(ny_tot/2)*dr
-                    y    = y*au_to_nm
-                    write(funit, *) y , 0.25*(mxll%Hz(i_ndx,j_ndx,k_ndx) + mxll%Hz(i_ndx-1,j_ndx,k_ndx) + &
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx,k_ndx) + mxll%Hz(i_ndx-1,j_ndx,k_ndx) + &
                                                 mxll%Hz(i_ndx,j_ndx-1,k_ndx) + mxll%Hz(i_ndx-1,j_ndx-1,k_ndx))
                 end do
 
             end select
 
+            write(funit, *)
             close(funit)
 
         case (LINE_Z_DETECTOR)
@@ -1035,9 +1081,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
-                    z    = z*au_to_nm
-                    write(funit, *) z , 0.5*(mxll%Ex(i_ndx-1,j_ndx,k_ndx)+mxll%Ex(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ex(i_ndx-1,j_ndx,k_ndx)+mxll%Ex(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Ey_FIELD)
@@ -1046,9 +1090,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
-                    z    = z*au_to_nm
-                    write(funit, *) z , 0.5*(mxll%Ey(i_ndx,j_ndx-1,k_ndx)+mxll%Ey(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ey(i_ndx,j_ndx-1,k_ndx)+mxll%Ey(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Ez_FIELD)
@@ -1057,9 +1099,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
-                    z    = z*au_to_nm
-                    write(funit, *) z , 0.5*(mxll%Ez(i_ndx,j_ndx,k_ndx-1)+mxll%Ez(i_ndx,j_ndx,k_ndx))
+                    write(funit, '(ES0.16,3X)', advance='no') 0.5*(mxll%Ez(i_ndx,j_ndx,k_ndx-1)+mxll%Ez(i_ndx,j_ndx,k_ndx))
                 end do
 
             case (Hx_FIELD)
@@ -1068,9 +1108,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
-                    z    = z*au_to_nm
-                    write(funit, *) z , 0.25*(mxll%Hx(i_ndx,j_ndx-1,k_ndx) + mxll%Hx(i_ndx,j_ndx,k_ndx) + &
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hx(i_ndx,j_ndx-1,k_ndx) + mxll%Hx(i_ndx,j_ndx,k_ndx) + &
                                                 mxll%Hx(i_ndx,j_ndx,k_ndx-1) + mxll%Hx(i_ndx,j_ndx-1,k_ndx-1))
                 end do
 
@@ -1080,9 +1118,7 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
-                    z    = z*au_to_nm
-                    write(funit, *) z , 0.25*(mxll%Hy(i_ndx-1,j_ndx,k_ndx) + mxll%Hy(i_ndx,j_ndx,k_ndx) +&
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hy(i_ndx-1,j_ndx,k_ndx) + mxll%Hy(i_ndx,j_ndx,k_ndx) +&
                                                 mxll%Hy(i_ndx,j_ndx,k_ndx-1) + mxll%Hy(i_ndx-1,j_ndx,k_ndx-1))
                 end do
 
@@ -1092,14 +1128,13 @@ subroutine write_3D_field(detectors, mxll, n_detectors, print_det_step, time, &
                     i_ndx = detectors(i)%indx_list(n,1)
                     j_ndx = detectors(i)%indx_list(n,2)
                     k_ndx = detectors(i)%indx_list(n,3)
-                    z    = (k_ndx+nz*mpi_coords(3))*dr - int(nz_tot/2)*dr
-                    z    = z*au_to_nm
-                    write(funit, *) z , 0.25*(mxll%Hz(i_ndx,j_ndx,k_ndx) + mxll%Hz(i_ndx-1,j_ndx,k_ndx) + &
+                    write(funit, '(ES0.16,3X)', advance='no') 0.25*(mxll%Hz(i_ndx,j_ndx,k_ndx) + mxll%Hz(i_ndx-1,j_ndx,k_ndx) + &
                                                 mxll%Hz(i_ndx,j_ndx-1,k_ndx) + mxll%Hz(i_ndx-1,j_ndx-1,k_ndx))
                 end do
 
             end select
 
+            write(funit, *)
             close(funit)
 
         case (PLANE_XY_DETECTOR)
