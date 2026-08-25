@@ -114,6 +114,7 @@ subroutine read_medium(this, id, dr, grid_Ndims, mpi_coords, mpi_dims)
                 this%mat1D(i) = eps_Re*Z_ONE +  eps_Im*Z_I
 
             end do
+
         case (2)
 
             do

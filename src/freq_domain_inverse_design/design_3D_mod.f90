@@ -254,6 +254,7 @@ subroutine apply_kernel_on_rho_3D(this)
 
     this%rho_conv = 0.0_dp
 
+    !$omp parallel do default(none) private(i,j,k,ii,jj,kk) shared(this) collapse(3) schedule(static)
     do k = 1, this%nz
     do j = 1, this%ny
     do i = 1, this%nx
@@ -272,6 +273,7 @@ subroutine apply_kernel_on_rho_3D(this)
     end do
     end do
     end do
+    !$omp end parallel do
 
 end subroutine apply_kernel_on_rho_3D
 
@@ -285,6 +287,7 @@ subroutine apply_kernel_on_grad_3D(this)
 
     this%grad_conv = 0.0_dp
 
+    !$omp parallel do default(none) private(i,j,k,ii,jj,kk) shared(this) collapse(3) schedule(static)
     do k = 1, this%nz
     do j = 1, this%ny
     do i = 1, this%nx
@@ -303,6 +306,7 @@ subroutine apply_kernel_on_grad_3D(this)
     end do
     end do
     end do
+    !$omp end parallel do
 
 end subroutine apply_kernel_on_grad_3D
 

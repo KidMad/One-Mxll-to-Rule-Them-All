@@ -113,7 +113,7 @@ subroutine init_optprblm(this, id,dimensions, dr, freq, eps_Re, eps_Im, eta, bou
         this%is_complex  = .true.
         eps_amp          = SQRT(eps_Re**2 + eps_Im**2)
         this%eta_max     = DSQRT((eps_amp + eps_Re)/(2.0d0))
-        this%eta_min     = DSQRT(eps0)
+        this%eta_min     = 1.0d0 !DSQRT(eps0)
         this%kappa_max   = DSQRT((eps_amp - eps_Re)/(2.0d0))
     else
         this%is_complex = .false.
@@ -595,32 +595,40 @@ subroutine update_permittivity(this, design)
     type is (TDesign_1D)
         if (this%is_complex) then
             do k = 1, this%nz
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(k)-eta_p)) + C2
-                eta       = (eta_max - eta_min)*func_rho + eta_min
-                kappa     = kappa_max*func_rho
-                this%eps_r%mat1D(k) = Z_ONE*eps0*(eta**2 - kappa**2) - Z_I*2.0d0*eps0*eta*kappa
+                if (this%opt_region(k,1,1)) then
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(k)-eta_p)) + C2
+                    eta       = (eta_max - eta_min)*func_rho + eta_min
+                    kappa     = kappa_max*func_rho
+                    this%eps_r%mat1D(k) = Z_ONE*eps0*(eta**2 - kappa**2) - Z_I*2.0d0*eps0*eta*kappa
+                end if
             end do
         else
             do k = 1, this%nz
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(k)-eta_p)) + C2
-                this%eps_r%mat1D(k) = Z_ONE*(func_rho*(eps_Re*eps0 - eps0) + eps0)
+                if (this%opt_region(k,1,1)) then
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(k)-eta_p)) + C2
+                    this%eps_r%mat1D(k) = Z_ONE*(func_rho*(eps_Re*eps0 - eps0) + eps0)
+                end if
             end do
         end if
     type is (TDesign_2D)
         if (this%is_complex) then
             do j = 1, this%ny
             do i = 1, this%nx
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j)-eta_p)) + C2
-                eta       = (eta_max - eta_min)*func_rho + eta_min
-                kappa     = kappa_max*func_rho
-                this%eps_r%mat2D(i,j) = Z_ONE*eps0*(eta**2 - kappa**2) - Z_I*2.0d0*eps0*eta*kappa
+                if (this%opt_region(i,j,1)) then
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j)-eta_p)) + C2
+                    eta       = (eta_max - eta_min)*func_rho + eta_min
+                    kappa     = kappa_max*func_rho
+                    this%eps_r%mat2D(i,j) = Z_ONE*eps0*(eta**2 - kappa**2) - Z_I*2.0d0*eps0*eta*kappa
+                end if
             end do
             end do
         else
             do j = 1, this%ny
             do i = 1, this%nx
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j)-eta_p)) + C2
-                this%eps_r%mat2D(i,j) = Z_ONE*(func_rho*(eps_Re*eps0 - eps0) + eps0)
+                if (this%opt_region(i,j,1)) then
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j)-eta_p)) + C2
+                    this%eps_r%mat2D(i,j) = Z_ONE*(func_rho*(eps_Re*eps0 - eps0) + eps0)
+                end if
             end do
             end do
         end if
@@ -630,10 +638,12 @@ subroutine update_permittivity(this, design)
             do k = 1, this%nz
             do j = 1, this%ny
             do i = 1, this%nx
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j,k)-eta_p)) + C2
-                eta       = (eta_max - eta_min)*func_rho + eta_min
-                kappa     = kappa_max*func_rho
-                this%eps_r%mat3D(i,j,k) = Z_ONE*eps0*(eta**2 - kappa**2) - Z_I*2.0d0*eps0*eta*kappa
+                if (this%opt_region(i,j,k)) then
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j,k)-eta_p)) + C2
+                    eta       = (eta_max - eta_min)*func_rho + eta_min
+                    kappa     = kappa_max*func_rho
+                    this%eps_r%mat3D(i,j,k) = Z_ONE*eps0*(eta**2 - kappa**2) - Z_I*2.0d0*eps0*eta*kappa
+                end if
             end do
             end do
             end do
@@ -641,8 +651,10 @@ subroutine update_permittivity(this, design)
             do k = 1, this%nz
             do j = 1, this%ny
             do i = 1, this%nx
-                func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j,k)-eta_p)) + C2
-                this%eps_r%mat3D(i,j,k) = Z_ONE*(func_rho*(eps_Re*eps0 - eps0) + eps0)
+                if (this%opt_region(i,j,k)) then
+                    func_rho  = C1*DTANH(beta_p*(design%rho_conv(i,j,k)-eta_p)) + C2
+                    this%eps_r%mat3D(i,j,k) = Z_ONE*(func_rho*(eps_Re*eps0 - eps0) + eps0)
+                end if
             end do
             end do
             end do

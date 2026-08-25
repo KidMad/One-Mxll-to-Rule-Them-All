@@ -223,6 +223,7 @@ subroutine apply_kernel_on_rho_1D(this)
 
     this%rho_conv = 0.0_dp
 
+    !$omp parallel do default(none) private(i,ii) shared(this) schedule(static)
     do i = 1, this%nx
         if (this%opt_region(i)) then
             do ii = -this%n_ker, this%n_ker
@@ -233,6 +234,7 @@ subroutine apply_kernel_on_rho_1D(this)
             end do
         end if
     end do
+    !$omp end parallel do
 
 end subroutine apply_kernel_on_rho_1D
 
@@ -246,6 +248,7 @@ subroutine apply_kernel_on_grad_1D(this)
 
     this%grad_conv = 0.0_dp
 
+    !$omp parallel do default(none) private(i,ii) shared(this) schedule(static)
     do i = 1, this%nx
         if (this%opt_region(i)) then
             do ii = -this%n_ker, this%n_ker
@@ -256,6 +259,7 @@ subroutine apply_kernel_on_grad_1D(this)
             end do
         end if
     end do
+    !$omp end parallel do
 
 end subroutine apply_kernel_on_grad_1D
 !###################################################################################################
