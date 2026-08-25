@@ -353,7 +353,6 @@ subroutine apply_operator_1D(Aop, f_vec, Af_vec, eps_r, transpose)
         Af_vec%pl_y(i) =  C1 * dfpxdz * Aop%s_inv_x(i) +  C2 * f_vec%pl_y(i)
         Af_vec%mi_x(i) =  C1 * dfmydz * Aop%s_inv_x(i) + C2 * f_vec%mi_x(i) + C3 * (eps_r%mat1D(i) - C4) * Ex
         Af_vec%mi_y(i) = -C1 * dfmxdz * Aop%s_inv_x(i) + C2 * f_vec%mi_y(i)
-
     end do
     !$omp end do
     !$omp end parallel
