@@ -700,7 +700,8 @@ subroutine write_3D_headers(detectors, n_detectors, print_det_step, time, &
                 y = detectors(i)%j_min*dr - int(mpi_dims(2)*grid_Ndims(2)/2)*dr
                 z = detectors(i)%k_min*dr - int(mpi_dims(3)*grid_Ndims(3)/2)*dr
 
-                write(funit, '("# Direction = ", A, "   Shift-Y = ", F0.3, " (nm)", "   Shift-Z = ", F0.3, " (nm)")') "x", y*au_to_nm, z*au_to_nm
+                write(funit, '("# Direction = ", A, "   Shift-Y = ", F0.3, " (nm)", "   Shift-Z = ", F0.3, " (nm)")') "x", &
+                      y*au_to_nm, z*au_to_nm
                 write(funit, '(A)', advance='no') '# '
 
                 do n = 1, detectors(i)%nd
@@ -726,7 +727,8 @@ subroutine write_3D_headers(detectors, n_detectors, print_det_step, time, &
                 x = detectors(i)%i_min*dr - int(mpi_dims(1)*grid_Ndims(1)/2)*dr
                 z = detectors(i)%k_min*dr - int(mpi_dims(3)*grid_Ndims(3)/2)*dr
 
-                write(funit, '("# Direction = ", A, "   Shift-X = ", F0.3, " (nm)", "   Shift-Z = ", F0.3, " (nm)")') "y", x*au_to_nm, z*au_to_nm
+                write(funit, '("# Direction = ", A, "   Shift-X = ", F0.3, " (nm)", "   Shift-Z = ", F0.3, " (nm)")') "y", &
+                      x*au_to_nm, z*au_to_nm
                 write(funit, '(A)', advance='no') '# '
                 
                 do n = 1, detectors(i)%nd
@@ -754,7 +756,8 @@ subroutine write_3D_headers(detectors, n_detectors, print_det_step, time, &
                 y = detectors(i)%j_min*dr - int(mpi_dims(2)*grid_Ndims(2)/2)*dr
                 x = detectors(i)%i_min*dr - int(mpi_dims(1)*grid_Ndims(1)/2)*dr
                 
-                write(funit, '("# Direction = ", A, "   Shift-X = ", F0.3, " (nm)", "   Shift-Y = ", F0.3, " (nm)")') "z", x*au_to_nm, y*au_to_nm
+                write(funit, '("# Direction = ", A, "   Shift-X = ", F0.3, " (nm)", "   Shift-Y = ", F0.3, " (nm)")') "z", &
+                      x*au_to_nm, y*au_to_nm
                 write(funit, '(A)', advance='no') '# '
                 
                 do n = 1, detectors(i)%nd
