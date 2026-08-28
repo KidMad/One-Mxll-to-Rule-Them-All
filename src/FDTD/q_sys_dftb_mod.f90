@@ -204,9 +204,9 @@ subroutine init_dftb(this, id, id_file, dt, t_steps, rank, print_on)
                                               this%coor(1,i), &
                                               this%coor(2,i), &
                                               this%coor(3,i)
-
+        
+        atom_type_exists = .false.
         do ii=1, n_at_typ
-            atom_type_exists = .false.
             if (this%atom_names(i) == atom_type_list(ii)) then
                 atom_type(i) = ii
                 atom_type_exists = .true.
